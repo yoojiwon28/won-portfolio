@@ -26,11 +26,21 @@ warnings.filterwarnings("ignore")
 # ─────────────────────────────────────────────
 # 환경 변수
 # ─────────────────────────────────────────────
-NOTION_TOKEN   = os.environ["NOTION_TOKEN"]
-NOTION_PAGE_ID = os.environ["NOTION_PAGE_ID"]
-DB_TRADE       = os.environ["DB_TRADE"]       # 매매일지 DB ID
-DB_HOLDINGS    = os.environ["DB_HOLDINGS"]    # 보유주식 DB ID
-DB_ASSETS      = os.environ["DB_ASSETS"]      # 총자산 DB ID
+NOTION_TOKEN   = os.environ["NOTION_TOKEN"].strip()
+NOTION_PAGE_ID = os.environ["NOTION_PAGE_ID"].strip().replace("-", "")
+DB_TRADE       = os.environ["DB_TRADE"].strip().replace("-", "")
+DB_HOLDINGS    = os.environ["DB_HOLDINGS"].strip().replace("-", "")
+DB_ASSETS      = os.environ["DB_ASSETS"].strip().replace("-", "")
+
+# ID 검증
+for _name, _val in [("NOTION_PAGE_ID", NOTION_PAGE_ID),
+                     ("DB_TRADE", DB_TRADE),
+                     ("DB_HOLDINGS", DB_HOLDINGS),
+                     ("DB_ASSETS", DB_ASSETS)]:
+    if len(_val) != 32 or not _val.isalnum():
+        print(f"  ⚠ {_name} 형식 이상: '{_val}' (길이={len(_val)})")
+    else:
+        print(f"  ✅ {_name}: {_val[:8]}...{_val[-4:]}")
 GITHUB_REPO    = os.environ.get("GITHUB_REPO", "YOUR_USER/swing-portfolio")
 GITHUB_BRANCH  = os.environ.get("GITHUB_BRANCH", "main")
 
