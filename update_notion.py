@@ -7,11 +7,11 @@ SWING Portfolio - GitHub Actions 자동 업데이트 스크립트 v3
   - 매일 KST 09:00 자동실행
   - Make 버튼 클릭 시 즉시실행 (workflow_dispatch)
 """
-
+ 
 import os, json, time, warnings
 from datetime import datetime, timedelta
 from pathlib import Path
-
+ 
 import requests
 import matplotlib
 matplotlib.use("Agg")
@@ -20,9 +20,9 @@ import matplotlib.font_manager as fm
 import matplotlib.ticker as mticker
 import yfinance as yf
 from pykrx import stock as krx
-
+ 
 warnings.filterwarnings("ignore")
-
+ 
 # ─────────────────────────────────────────────
 # 환경 변수
 # ─────────────────────────────────────────────
@@ -33,7 +33,7 @@ DB_HOLDINGS    = os.environ["DB_HOLDINGS"]    # 보유주식 DB ID
 DB_ASSETS      = os.environ["DB_ASSETS"]      # 총자산 DB ID
 GITHUB_REPO    = os.environ.get("GITHUB_REPO", "YOUR_USER/swing-portfolio")
 GITHUB_BRANCH  = os.environ.get("GITHUB_BRANCH", "main")
-
+ 
 HEADERS = {
     "Authorization": f"Bearer {NOTION_TOKEN}",
     "Content-Type": "application/json",
@@ -46,7 +46,7 @@ DATA_DIR     = Path("data")
 CHARTS_DIR.mkdir(exist_ok=True)
 DATA_DIR.mkdir(exist_ok=True)
 HISTORY_FILE = DATA_DIR / "history.csv"
-
+ 
 # ─────────────────────────────────────────────
 # 한글 폰트
 # ─────────────────────────────────────────────
@@ -57,12 +57,12 @@ def setup_font():
     else:
         plt.rcParams["font.family"] = "DejaVu Sans"
     plt.rcParams["axes.unicode_minus"] = False
-
+ 
 setup_font()
-
+ 
 def raw_url(filename):
     return f"https://raw.githubusercontent.com/{GITHUB_REPO}/{GITHUB_BRANCH}/charts/{filename}"
-
+ 
 # ─────────────────────────────────────────────
 # Notion API 유틸
 # ─────────────────────────────────────────────
@@ -70,24 +70,24 @@ def nget(path):
     r = requests.get(f"https://api.notion.com/v1/{path}", headers=HEADERS)
     r.raise_for_status()
     return r.json()
-
+ 
 def npatch(path, body):
     r = requests.patch(f"https://api.notion.com/v1/{path}",
                        headers=HEADERS, data=json.dumps(body, ensure_ascii=False))
     r.raise_for_status()
     return r.json()
-
+ 
 def npost(path, body):
     r = requests.post(f"https://api.notion.com/v1/{path}",
                       headers=HEADERS, data=json.dumps(body, ensure_ascii=False))
     r.raise_for_status()
     return r.json()
-
+ 
 def ndelete(block_id):
     r = requests.delete(f"https://api.notion.com/v1/blocks/{block_id}",
                         headers=HEADERS)
     r.raise_for_status()
-
+ 
 # ─────────────────────────────────────────────
 # rich_text / 블록 헬퍼
 # ─────────────────────────────────────────────
@@ -97,33 +97,33 @@ def rt(content, bold=False, color=None):
     if color:
         obj["annotations"]["color"] = color
     return obj
-
+ 
 def trow(cells):
     return {"object": "block", "type": "table_row",
             "table_row": {"cells": [[rt(c)] for c in cells]}}
-
+ 
 def image_block(url):
     return {"object": "block", "type": "image",
             "image": {"type": "external", "external": {"url": url}}}
-
+ 
 def h2_block(text):
     return {"object": "block", "type": "heading_2",
             "heading_2": {"rich_text": [rt(text, bold=True)]}}
-
+ 
 def h3_block(text):
     return {"object": "block", "type": "heading_3",
             "heading_3": {"rich_text": [rt(text, bold=True)]}}
-
+ 
 def para_block(text, color=None):
     rich = [rt(text)]
     if color:
         rich[0]["annotations"]["color"] = color
     return {"object": "block", "type": "paragraph",
             "paragraph": {"rich_text": rich}}
-
+ 
 def divider_block():
     return {"object": "block", "type": "divider", "divider": {}}
-
+ 
 def get_all_blocks(page_id):
     result, cursor = [], None
     while True:
@@ -136,43 +136,49 @@ def get_all_blocks(page_id):
             break
         cursor = data["next_cursor"]
     return result
-
+ 
 def get_table_rows(tid):
     return nget(f"blocks/{tid}/children?page_size=100")["results"]
-
+ 
 def update_row(row_id, cells):
     npatch(f"blocks/{row_id}",
            {"table_row": {"cells": [[rt(c)] for c in cells]}})
-
+ 
 def append_row(tid, cells):
     npost(f"blocks/{tid}/children", {"children": [trow(cells)]})
-
-def append_blocks(parent_id, children):
+ 
+def append_blocks(parent_id, children, ignore_errors=False):
     # Notion API는 한번에 100블록 제한
     for i in range(0, len(children), 100):
-        npost(f"blocks/{parent_id}/children", {"children": children[i:i+100]})
-
+        try:
+            npost(f"blocks/{parent_id}/children", {"children": children[i:i+100]})
+        except Exception as e:
+            if ignore_errors:
+                print(f"  ⚠ 블록 추가 실패 (무시): {e}")
+            else:
+                raise
+ 
 # ─────────────────────────────────────────────
 # DB 프로퍼티 헬퍼
 # ─────────────────────────────────────────────
 def prop_title(text):
     return {"title": [{"text": {"content": str(text)}}]}
-
+ 
 def prop_rich_text(text):
     return {"rich_text": [{"text": {"content": str(text)}}]}
-
+ 
 def prop_number(value):
     return {"number": float(value) if value is not None else None}
-
+ 
 def prop_select(name):
     return {"select": {"name": str(name)}}
-
+ 
 def prop_date(date_str):
     # date_str: "YYYY-MM-DD" 또는 "YYYYMMDD"
     if len(date_str) == 8:
         date_str = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
     return {"date": {"start": date_str}}
-
+ 
 def get_text(prop):
     """Notion 프로퍼티에서 텍스트 추출"""
     ptype = prop.get("type")
@@ -183,18 +189,18 @@ def get_text(prop):
     else:
         return ""
     return "".join(t.get("plain_text", "") for t in items)
-
+ 
 def get_number(prop):
     return prop.get("number")
-
+ 
 def get_select(prop):
     sel = prop.get("select")
     return sel["name"] if sel else ""
-
+ 
 def get_date(prop):
     d = prop.get("date")
     return d["start"] if d else ""
-
+ 
 # ─────────────────────────────────────────────
 # 노션 매매일지 DB에서 데이터 읽기
 # ─────────────────────────────────────────────
@@ -208,7 +214,7 @@ def load_trades_from_notion():
         if cursor:
             body["start_cursor"] = cursor
         data = npost(f"databases/{DB_TRADE}/query", body)
-
+ 
         for page in data["results"]:
             p = page["properties"]
             date_raw = get_date(p.get("날짜", {}))
@@ -224,14 +230,14 @@ def load_trades_from_notion():
                 "reason":   get_text(p.get("사유", {})),
                 "page_id":  page["id"],
             })
-
+ 
         if not data.get("has_more"):
             break
         cursor = data["next_cursor"]
-
+ 
     print(f"  ✅ 노션 매매일지 DB에서 {len(trades)}건 로드")
     return trades
-
+ 
 # ─────────────────────────────────────────────
 # 보유주식 집계
 # ─────────────────────────────────────────────
@@ -258,7 +264,7 @@ def aggregate_holdings(trades):
                 avg = holdings[tk]["total_cost"] / holdings[tk]["qty"]
                 holdings[tk]["qty"]        -= t["qty"]
                 holdings[tk]["total_cost"] -= t["qty"] * avg
-
+ 
     result = []
     for h in holdings.values():
         if h["qty"] > 0:
@@ -269,7 +275,7 @@ def aggregate_holdings(trades):
             h["hold_days"] = (datetime.today() - buy_dt).days
             result.append(h)
     return result
-
+ 
 # ─────────────────────────────────────────────
 # 현재가 조회
 # ─────────────────────────────────────────────
@@ -284,7 +290,7 @@ def get_krx_price(ticker):
         except Exception:
             pass
     return None
-
+ 
 def get_current_price(ticker, category):
     try:
         if category in ("국내종목", "국내ETF", "국내ETF-해외"):
@@ -295,7 +301,7 @@ def get_current_price(ticker, category):
     except Exception as e:
         print(f"    ⚠ {ticker} 가격 조회 실패: {e}")
         return None
-
+ 
 # ─────────────────────────────────────────────
 # 히스토리 저장 (누적 수익 곡선용)
 # ─────────────────────────────────────────────
@@ -316,7 +322,7 @@ def save_history(total_eval, total_profit, total_rate):
         w.writeheader(); w.writerows(rows)
     print(f"  ✅ 히스토리 저장 ({len(rows)}일치)")
     return rows
-
+ 
 # ─────────────────────────────────────────────
 # 차트 ① 분류별 파이차트
 # ─────────────────────────────────────────────
@@ -330,7 +336,7 @@ def chart_pie(holdings):
     sizes  = list(cat_amt.values())
     colors = ["#4E79A7","#F28E2B","#59A14F","#E15759","#76B7B2","#EDC948"]
     total  = sum(sizes)
-
+ 
     fig, ax = plt.subplots(figsize=(8, 6), facecolor="white")
     _, texts, autotexts = ax.pie(
         sizes, labels=labels, autopct="%1.1f%%", startangle=90,
@@ -339,7 +345,7 @@ def chart_pie(holdings):
     for t in texts:    t.set_fontsize(12)
     for at in autotexts:
         at.set_fontsize(11); at.set_fontweight("bold"); at.set_color("white")
-
+ 
     ax.set_title(f"보유주식 분류별 비중\n총평가금액 {total:,.0f}원",
                  fontsize=14, fontweight="bold", pad=20)
     ax.legend([f"{l}  {s:,.0f}원 ({s/total*100:.1f}%)"
@@ -353,7 +359,7 @@ def chart_pie(holdings):
     plt.close(fig)
     print(f"  ✅ 파이차트 저장")
     return "pie_category.png"
-
+ 
 # ─────────────────────────────────────────────
 # 차트 ② 종목별 수익률 바 차트
 # ─────────────────────────────────────────────
@@ -363,7 +369,7 @@ def chart_bar_profit(holdings):
     names  = [h["name"] for h in holdings]
     rates  = [h["profit_rate"] for h in holdings]
     colors = ["#1f77b4" if r >= 0 else "#d62728" for r in rates]
-
+ 
     fig, ax = plt.subplots(figsize=(max(8, len(names) * 1.2), 6), facecolor="white")
     bars = ax.bar(names, rates, color=colors, width=0.6,
                   edgecolor="white", linewidth=0.8)
@@ -393,7 +399,7 @@ def chart_bar_profit(holdings):
     plt.close(fig)
     print(f"  ✅ 수익률 바 차트 저장")
     return "bar_profit.png"
-
+ 
 # ─────────────────────────────────────────────
 # 차트 ③ 누적 총자산 곡선
 # ─────────────────────────────────────────────
@@ -404,7 +410,7 @@ def chart_history_curve(history_rows):
     dates  = [r["date"]                   for r in history_rows]
     evals  = [int(r["total_eval"])         for r in history_rows]
     rates  = [float(r["total_rate"])       for r in history_rows]
-
+ 
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(11, 8),
                                    facecolor="white", sharex=True)
     fig.suptitle(f"포트폴리오 총자산 변화  (최근 {len(dates)}일)",
@@ -417,7 +423,7 @@ def chart_history_curve(history_rows):
     ax1.set_ylabel("총평가금액", fontsize=10)
     ax1.grid(alpha=0.3, linestyle="--")
     ax1.tick_params(axis="x", rotation=30, labelsize=8)
-
+ 
     bar_colors = ["#1f77b4" if r >= 0 else "#d62728" for r in rates]
     ax2.bar(dates, rates, color=bar_colors, width=0.6, alpha=0.85)
     ax2.axhline(0, color="black", linewidth=0.8)
@@ -431,7 +437,7 @@ def chart_history_curve(history_rows):
     plt.close(fig)
     print(f"  ✅ 누적 총자산 곡선 저장")
     return "history_curve.png"
-
+ 
 # ─────────────────────────────────────────────
 # 차트 ④ 지수 대비 월별 수익률
 # ─────────────────────────────────────────────
@@ -451,7 +457,7 @@ WATCHLIST = [
     {"name":"존슨앤드존슨", "ticker":"JNJ",    "index":"S&P500"},
     {"name":"코카콜라",     "ticker":"KO",     "index":"S&P500"},
 ]
-
+ 
 def get_monthly_returns_yf(ticker, months=6):
     end   = datetime.today()
     start = (end - timedelta(days=months * 31)).replace(day=1)
@@ -463,7 +469,7 @@ def get_monthly_returns_yf(ticker, months=6):
     return {closes.index[i+1].strftime("%Y-%m"):
             round(float((closes.iloc[i+1]/closes.iloc[i]-1)*100), 2)
             for i in range(len(closes)-1)}
-
+ 
 def get_monthly_returns_krx(ticker, months=6):
     end   = datetime.today()
     start = end - timedelta(days=months*31+10)
@@ -479,7 +485,7 @@ def get_monthly_returns_krx(ticker, months=6):
                 for i in range(len(closes)-1)}
     except Exception:
         return {}
-
+ 
 def chart_index_comparison():
     print("  기준지수 조회 중...")
     index_returns = {}
@@ -489,12 +495,12 @@ def chart_index_comparison():
     # 코스피200: pykrx로 조회 (069500 = KODEX 200)
     index_returns["코스피200"] = get_monthly_returns_krx("069500", months=6)
     time.sleep(0.3)
-
+ 
     all_months = set()
     for r in index_returns.values():
         all_months.update(r.keys())
     months_sorted = sorted(all_months)[-6:]
-
+ 
     stock_data, judgements = [], []
     print("  관심종목 조회 중...")
     for item in WATCHLIST:
@@ -502,7 +508,7 @@ def chart_index_comparison():
         ret = get_monthly_returns_krx(item["ticker"]) if is_domestic \
               else get_monthly_returns_yf(item["ticker"])
         time.sleep(0.3)
-
+ 
         idx_ret   = index_returns.get(item["index"], {})
         stock_cum = sum(ret.get(m, 0) for m in months_sorted)
         idx_cum   = sum(idx_ret.get(m, 0) for m in months_sorted)
@@ -517,7 +523,7 @@ def chart_index_comparison():
         })
         stock_data.append({**item, "returns": ret})
         print(f"    {item['name']}: {stock_cum:+.1f}%  지수 {idx_cum:+.1f}%")
-
+ 
     # 서브플롯
     index_groups = {}
     for sd in stock_data:
@@ -527,7 +533,7 @@ def chart_index_comparison():
     if n == 1: axes = [axes]
     colors_s = ["#4E79A7","#F28E2B","#59A14F","#E15759",
                 "#76B7B2","#EDC948","#B07AA1","#FF9DA7"]
-
+ 
     for ax, (idx_name, stocks) in zip(axes, index_groups.items()):
         idx_ret = index_returns.get(idx_name, {})
         ax.plot(months_sorted, [idx_ret.get(m) for m in months_sorted],
@@ -548,7 +554,7 @@ def chart_index_comparison():
         ax.legend(loc="upper left", fontsize=9, framealpha=0.7,
                   ncol=2 if len(stocks) > 4 else 1)
         ax.grid(axis="y", alpha=0.3)
-
+ 
     fig.suptitle(f"관심종목 × 기준지수 수익률 비교 ({TODAY})",
                  fontsize=15, fontweight="bold", y=1.01)
     plt.tight_layout()
@@ -557,7 +563,7 @@ def chart_index_comparison():
     plt.close(fig)
     print(f"  ✅ 지수비교 차트 저장")
     return "index_comparison.png", judgements, months_sorted
-
+ 
 # ─────────────────────────────────────────────
 # 노션 [table] 블록 업데이트
 # ─────────────────────────────────────────────
@@ -566,7 +572,7 @@ def find_table_blocks(page_id):
     blocks = get_all_blocks(page_id)
     tables = {}
     last_h2 = None
-
+ 
     for b in blocks:
         btype = b["type"]
         if btype == "heading_2":
@@ -596,9 +602,9 @@ def find_table_blocks(page_id):
                           for r in b["paragraph"].get("rich_text", []))
             if "작성일자" in txt:
                 tables["paragraph_date"] = b["id"]
-
+ 
     return tables, blocks
-
+ 
 def update_table_total_assets(sec, total_eval, total_profit, total_rate):
     tid = sec.get("table_id")
     if not tid: return
@@ -608,21 +614,21 @@ def update_table_total_assets(sec, total_eval, total_profit, total_rate):
              f"{total_profit:+,.0f}원", f"{emoji} {total_rate:+.2f}%"]
     if len(rows) >= 2: update_row(rows[1]["id"], cells)
     else:              append_row(tid, cells)
-
+ 
 def update_table_holdings(sec, holdings):
     """보유주식 테이블 업데이트 — 헤더 컬럼 수 자동 감지해서 맞춤"""
     tid = sec.get("table_id")
     if not tid: return
     all_rows = get_table_rows(tid)
     if not all_rows: return
-
+ 
     # 헤더에서 컬럼 수와 현재가 포함 여부 확인
     header_cells = all_rows[0]["table_row"]["cells"]
     header_texts = ["".join(t.get("plain_text","") for t in cell)
                     for cell in header_cells]
     has_current_price = "현재가" in header_texts
     col_count = len(header_texts)
-
+ 
     existing = all_rows[1:]
     for i, h in enumerate(holdings):
         emoji = "📈" if h["profit_rate"] >= 0 else "📉"
@@ -656,16 +662,16 @@ def update_table_holdings(sec, holdings):
         if i < len(existing): update_row(existing[i]["id"], cells)
         else:                  append_row(tid, cells)
         time.sleep(0.15)
-
+ 
 def update_table_trade_log(sec, trades):
     """최근 날짜 매매일지만 [table]에 표시, heading 날짜도 업데이트"""
     tid = sec.get("table_id")
     hid = sec.get("heading_id")
     if not tid or not trades: return
-
+ 
     latest_date = max(t["date"] for t in trades if t["date"])
     latest = [t for t in trades if t["date"] == latest_date]
-
+ 
     # heading_2 날짜 업데이트
     if hid:
         date_fmt = f"{latest_date[:4]}-{latest_date[4:6]}-{latest_date[6:]}" \
@@ -673,7 +679,7 @@ def update_table_trade_log(sec, trades):
         npatch(f"blocks/{hid}", {
             "heading_2": {"rich_text": [rt(f"📝 최근 매매일지 ({date_fmt})", bold=True)]}
         })
-
+ 
     existing = get_table_rows(tid)[1:]
     for i, t in enumerate(latest):
         date_fmt = f"{t['date'][:4]}-{t['date'][4:6]}-{t['date'][6:]}" \
@@ -683,7 +689,7 @@ def update_table_trade_log(sec, trades):
         if i < len(existing): update_row(existing[i]["id"], cells)
         else:                  append_row(tid, cells)
         time.sleep(0.15)
-
+ 
 # ─────────────────────────────────────────────
 # 노션 DB 업데이트 (child_database)
 # ─────────────────────────────────────────────
@@ -698,7 +704,7 @@ def get_db_pages(db_id):
         if not data.get("has_more"): break
         cursor = data["next_cursor"]
     return pages
-
+ 
 def db_update_total_assets(total_eval, total_profit, total_rate):
     """총자산 DB: 오늘 날짜 행 업데이트 or 신규 추가"""
     pages = get_db_pages(DB_ASSETS)
@@ -709,7 +715,7 @@ def db_update_total_assets(total_eval, total_profit, total_rate):
         if title == TODAY:
             today_page = p
             break
-
+ 
     props = {
         "작성일자":   prop_title(TODAY),
         "총평가금액": prop_number(total_eval),
@@ -721,7 +727,7 @@ def db_update_total_assets(total_eval, total_profit, total_rate):
     else:
         npost("pages", {"parent": {"database_id": DB_ASSETS}, "properties": props})
     print("  ✅ 총자산 DB 업데이트")
-
+ 
 def db_update_holdings(holdings):
     """보유주식 DB: 전체 동기화 (기존 전체 삭제 후 재작성)"""
     # 기존 페이지 아카이브 (삭제 대신 archived 처리)
@@ -729,7 +735,7 @@ def db_update_holdings(holdings):
     for p in existing:
         npatch(f"pages/{p['id']}", {"archived": True})
         time.sleep(0.1)
-
+ 
     # 신규 작성
     for h in holdings:
         emoji = "📈" if h["profit_rate"] >= 0 else "📉"
@@ -746,7 +752,7 @@ def db_update_holdings(holdings):
         npost("pages", {"parent": {"database_id": DB_HOLDINGS}, "properties": props})
         time.sleep(0.2)
     print(f"  ✅ 보유주식 DB 업데이트 ({len(holdings)}종목)")
-
+ 
 def db_sync_trade_log(trades):
     """
     매매일지 DB 동기화:
@@ -760,7 +766,7 @@ def db_sync_trade_log(trades):
         tk   = get_text(pr.get("티커", {}))
         typ  = get_select(pr.get("매수매도", {}))
         existing_keys.add(f"{date}_{tk}_{typ}")
-
+ 
     added = 0
     for t in trades:
         date_fmt = f"{t['date'][:4]}-{t['date'][4:6]}-{t['date'][6:]}" \
@@ -783,21 +789,24 @@ def db_sync_trade_log(trades):
         added += 1
         time.sleep(0.2)
     print(f"  ✅ 매매일지 DB 동기화 (신규 {added}건)")
-
+ 
 # ─────────────────────────────────────────────
 # 차트 이미지 블록 upsert
 # ─────────────────────────────────────────────
 def upsert_image_after_h3(page_id, all_blocks, h3_info, img_url):
     """heading_3 다음 image 블록 URL 교체. 없으면 page에 append."""
-    if h3_info:
-        h3_id, h3_idx = h3_info
-        next_idx = h3_idx + 1
-        if next_idx < len(all_blocks) and all_blocks[next_idx]["type"] == "image":
-            npatch(f"blocks/{all_blocks[next_idx]['id']}",
-                   {"image": {"type": "external", "external": {"url": img_url}}})
-            return
-    append_blocks(page_id, [image_block(img_url)])
-
+    try:
+        if h3_info:
+            h3_id, h3_idx = h3_info
+            next_idx = h3_idx + 1
+            if next_idx < len(all_blocks) and all_blocks[next_idx]["type"] == "image":
+                npatch(f"blocks/{all_blocks[next_idx]['id']}",
+                       {"image": {"type": "external", "external": {"url": img_url}}})
+                return
+        append_blocks(page_id, [image_block(img_url)], ignore_errors=True)
+    except Exception as e:
+        print(f"  ⚠ 이미지 블록 업데이트 실패 (무시): {e}")
+ 
 def upsert_analysis_section(page_id, tables, all_blocks,
                              pie_file, bar_file, curve_file):
     sec = tables.get("수익 분석", {})
@@ -812,7 +821,7 @@ def upsert_analysis_section(page_id, tables, all_blocks,
         if curve_file:
             new_blocks += [h3_block("📈 누적 총자산 변화 곡선"),
                            image_block(raw_url(curve_file))]
-        append_blocks(page_id, new_blocks)
+        append_blocks(page_id, new_blocks, ignore_errors=True)
         print("  ✅ '수익 분석' 섹션 신규 생성")
         return
     if pie_file:
@@ -825,7 +834,7 @@ def upsert_analysis_section(page_id, tables, all_blocks,
         upsert_image_after_h3(page_id, all_blocks,
                               sec.get("curve_h3"), raw_url(curve_file))
     print("  ✅ '수익 분석' 차트 업데이트")
-
+ 
 def upsert_hold_tracker(page_id, tables, holdings):
     sec = tables.get("보유기간 트래커", {})
     headers = ["종목명","티커","분류","최초매수일","보유일수","매입가","현재가","수익률"]
@@ -860,13 +869,13 @@ def upsert_hold_tracker(page_id, tables, holdings):
         else:                  append_row(tid, cells)
         time.sleep(0.15)
     print(f"  ✅ 보유기간 트래커 업데이트")
-
+ 
 def upsert_index_section(page_id, tables, all_blocks,
                          judgements, months_sorted, chart_file):
     sec       = tables.get("지수기반 종목분석", {})
     chart_url = raw_url(chart_file)
     j_header  = ["종목명","티커","기준지수","종목누적(%)","지수누적(%)","차이(%)","판정"]
-
+ 
     if not sec.get("heading_id"):
         j_rows = [trow([j["name"],j["ticker"],j["index"],
                         str(j["종목누적(%)"]),str(j["지수누적(%)"]),
@@ -884,7 +893,7 @@ def upsert_index_section(page_id, tables, all_blocks,
         ])
         print("  ✅ '지수기반 종목분석' 섹션 신규 생성")
         return
-
+ 
     tid = sec.get("table_id")
     if tid:
         existing = get_table_rows(tid)[1:]
@@ -898,7 +907,7 @@ def upsert_index_section(page_id, tables, all_blocks,
     upsert_image_after_h3(page_id, all_blocks,
                           sec.get("chart_h3"), chart_url)
     print("  ✅ '지수기반 종목분석' 업데이트")
-
+ 
 # ─────────────────────────────────────────────
 # 날짜 paragraph 업데이트
 # ─────────────────────────────────────────────
@@ -911,77 +920,130 @@ def update_date_paragraph(tables):
         ]}
     })
     print("  ✅ 작성일자 업데이트")
-
+ 
 # ─────────────────────────────────────────────
 # 메인
 # ─────────────────────────────────────────────
+# 중간 상태 저장 파일
+STATE_FILE = DATA_DIR / "run_state.json"
+ 
+def save_state(data):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+ 
+def load_state():
+    if not STATE_FILE.exists():
+        return None
+    with open(STATE_FILE, encoding="utf-8") as f:
+        return json.load(f)
+ 
 def main():
+    run_mode = os.environ.get("RUN_MODE", "all")  # charts_only / notion_only / all
     print(f"\n{'='*55}")
     print(f"  SWING Portfolio v3  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  모드: {run_mode}")
     print(f"{'='*55}\n")
-
-    # ── 1. 노션 매매일지 DB에서 데이터 읽기
-    print("[1/6] 노션 매매일지 DB 읽기...")
-    trades   = load_trades_from_notion()
-    holdings = aggregate_holdings(trades)
-    print(f"  보유종목 {len(holdings)}개\n")
-
-    # ── 2. 현재가 조회 & 수익 계산
-    print("[2/6] 현재가 조회...")
-    for h in holdings:
-        price = get_current_price(h["ticker"], h["category"])
-        h["current_price"] = price or h["avg_price"]
-        h["eval_amount"]   = h["current_price"] * h["qty"]
-        h["profit"]        = h["eval_amount"] - h["total_cost"]
-        h["profit_rate"]   = h["profit"] / h["total_cost"] * 100 \
-                             if h["total_cost"] else 0
-        print(f"  {h['name']}: {h['current_price']:,.0f}원  "
-              f"{'📈' if h['profit_rate']>=0 else '📉'}{h['profit_rate']:+.2f}%")
-        time.sleep(0.3)
-
-    total_eval   = sum(h["eval_amount"] for h in holdings)
-    total_cost   = sum(h["total_cost"]  for h in holdings)
-    total_profit = total_eval - total_cost
-    total_rate   = total_profit / total_cost * 100 if total_cost else 0
-    print(f"\n  → 총평가금액 {total_eval:,.0f}원  ({total_rate:+.2f}%)")
-
-    # ── 3. 히스토리 저장
-    history_rows = save_history(total_eval, total_profit, total_rate)
-
-    # ── 4. 차트 생성
-    print("\n[3/6] 차트 생성...")
-    pie_file   = chart_pie(holdings)
-    bar_file   = chart_bar_profit(holdings)
-    curve_file = chart_history_curve(history_rows)
-    idx_file, judgements, months_sorted = chart_index_comparison()
-
-    # ── 5. Notion DB 업데이트 (child_database)
-    print("\n[4/6] Notion DB 업데이트...")
-    db_update_total_assets(total_eval, total_profit, total_rate)
-    db_update_holdings(holdings)
-    db_sync_trade_log(trades)
-
-    # ── 6. Notion [table] 블록 업데이트
-    print("\n[5/6] Notion 테이블 블록 업데이트...")
-    tables, all_blocks = find_table_blocks(NOTION_PAGE_ID)
-    update_date_paragraph(tables)
-    update_table_total_assets(tables.get("총자산", {}),
-                              total_eval, total_profit, total_rate)
-    update_table_holdings(tables.get("보유주식", {}), holdings)
-    update_table_trade_log(tables.get("최근 매매일지", {}), trades)
-
-    # ── 7. 차트 섹션 upsert
-    print("\n[6/6] 차트·추가 섹션 업데이트...")
-    upsert_analysis_section(NOTION_PAGE_ID, tables, all_blocks,
-                            pie_file, bar_file, curve_file)
-    upsert_hold_tracker(NOTION_PAGE_ID, tables, holdings)
-    upsert_index_section(NOTION_PAGE_ID, tables, all_blocks,
-                         judgements, months_sorted, idx_file)
-
+ 
+    if run_mode in ("charts_only", "all"):
+        # ── 1. 노션 매매일지 DB에서 데이터 읽기
+        print("[1] 노션 매매일지 DB 읽기...")
+        trades   = load_trades_from_notion()
+        holdings = aggregate_holdings(trades)
+        print(f"  보유종목 {len(holdings)}개\n")
+ 
+        # ── 2. 현재가 조회 & 수익 계산
+        print("[2] 현재가 조회...")
+        for h in holdings:
+            price = get_current_price(h["ticker"], h["category"])
+            h["current_price"] = price or h["avg_price"]
+            h["eval_amount"]   = h["current_price"] * h["qty"]
+            h["profit"]        = h["eval_amount"] - h["total_cost"]
+            h["profit_rate"]   = h["profit"] / h["total_cost"] * 100 \
+                                 if h["total_cost"] else 0
+            print(f"  {h['name']}: {h['current_price']:,.0f}원  "
+                  f"{'📈' if h['profit_rate']>=0 else '📉'}{h['profit_rate']:+.2f}%")
+            time.sleep(0.3)
+ 
+        total_eval   = sum(h["eval_amount"] for h in holdings)
+        total_cost   = sum(h["total_cost"]  for h in holdings)
+        total_profit = total_eval - total_cost
+        total_rate   = total_profit / total_cost * 100 if total_cost else 0
+        print(f"\n  → 총평가금액 {total_eval:,.0f}원  ({total_rate:+.2f}%)")
+ 
+        # ── 3. 히스토리 저장
+        history_rows = save_history(total_eval, total_profit, total_rate)
+ 
+        # ── 4. 차트 생성
+        print("\n[3] 차트 생성...")
+        pie_file   = chart_pie(holdings)
+        bar_file   = chart_bar_profit(holdings)
+        curve_file = chart_history_curve(history_rows)
+        idx_file, judgements, months_sorted = chart_index_comparison()
+ 
+        # 중간 상태 저장 (notion_only 단계에서 사용)
+        save_state({
+            "trades":        trades,
+            "holdings":      holdings,
+            "total_eval":    total_eval,
+            "total_profit":  total_profit,
+            "total_rate":    total_rate,
+            "pie_file":      pie_file,
+            "bar_file":      bar_file,
+            "curve_file":    curve_file,
+            "idx_file":      idx_file,
+            "judgements":    judgements,
+            "months_sorted": months_sorted,
+        })
+ 
+        if run_mode == "charts_only":
+            print("\n  ✅ 차트 생성 완료 — Notion 업데이트는 STEP 3에서 진행")
+            return
+ 
+    if run_mode in ("notion_only", "all"):
+        # 저장된 상태 로드
+        state = load_state()
+        if not state:
+            print("  ❌ 상태 파일 없음. charts_only 먼저 실행하세요.")
+            return
+        trades        = state["trades"]
+        holdings      = state["holdings"]
+        total_eval    = state["total_eval"]
+        total_profit  = state["total_profit"]
+        total_rate    = state["total_rate"]
+        pie_file      = state["pie_file"]
+        bar_file      = state["bar_file"]
+        curve_file    = state["curve_file"]
+        idx_file      = state["idx_file"]
+        judgements    = state["judgements"]
+        months_sorted = state["months_sorted"]
+ 
+        # ── 5. Notion DB 업데이트
+        print("\n[4] Notion DB 업데이트...")
+        db_update_total_assets(total_eval, total_profit, total_rate)
+        db_update_holdings(holdings)
+        db_sync_trade_log(trades)
+ 
+        # ── 6. Notion [table] 블록 업데이트
+        print("\n[5] Notion 테이블 블록 업데이트...")
+        tables, all_blocks = find_table_blocks(NOTION_PAGE_ID)
+        update_date_paragraph(tables)
+        update_table_total_assets(tables.get("총자산", {}),
+                                  total_eval, total_profit, total_rate)
+        update_table_holdings(tables.get("보유주식", {}), holdings)
+        update_table_trade_log(tables.get("최근 매매일지", {}), trades)
+ 
+        # ── 7. 차트 섹션 upsert
+        print("\n[6] 차트·추가 섹션 업데이트...")
+        upsert_analysis_section(NOTION_PAGE_ID, tables, all_blocks,
+                                pie_file, bar_file, curve_file)
+        upsert_hold_tracker(NOTION_PAGE_ID, tables, holdings)
+        upsert_index_section(NOTION_PAGE_ID, tables, all_blocks,
+                             judgements, months_sorted, idx_file)
+ 
     print(f"\n{'='*55}")
     print(f"  ✅ 완료!  총평가금액 {total_eval:,.0f}원  ({total_rate:+.2f}%)")
     print(f"{'='*55}\n")
-
-
+ 
+ 
 if __name__ == "__main__":
     main()
