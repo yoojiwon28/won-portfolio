@@ -848,21 +848,32 @@ def upsert_image_after_h3(page_id, all_blocks, h3_info, img_url):
     except Exception as e:
         print(f"  ⚠ 이미지 블록 업데이트 실패 (무시): {e}")
 
+def safe_add_block(page_id, blk, label="블록"):
+    """블록 하나를 안전하게 추가. 실패해도 계속 진행."""
+    try:
+        npost(f"blocks/{page_id}/children", {"children": [blk]})
+        time.sleep(0.2)
+        return True
+    except Exception as e:
+        print(f"  ⚠ {label} 추가 실패 (무시): {str(e)[:80]}")
+        return False
+
 def upsert_analysis_section(page_id, tables, all_blocks,
                              pie_file, bar_file, curve_file):
     sec = tables.get("수익 분석", {})
     if not sec.get("heading_id"):
-        new_blocks = [divider_block(), h2_block("📊 수익 분석")]
+        # 텍스트 블록만 먼저 추가 (이미지 제외)
+        safe_add_block(page_id, divider_block(), "divider")
+        safe_add_block(page_id, h2_block("📊 수익 분석"), "h2")
         if pie_file:
-            new_blocks += [h3_block("📊 분류별 비율"),
-                           image_block(raw_url(pie_file))]
+            safe_add_block(page_id, h3_block("📊 분류별 비율"), "h3")
+            safe_add_block(page_id, image_block(raw_url(pie_file)), "파이차트 이미지")
         if bar_file:
-            new_blocks += [h3_block("📊 종목별 수익률 바 차트"),
-                           image_block(raw_url(bar_file))]
+            safe_add_block(page_id, h3_block("📊 종목별 수익률 바 차트"), "h3")
+            safe_add_block(page_id, image_block(raw_url(bar_file)), "바차트 이미지")
         if curve_file:
-            new_blocks += [h3_block("📈 누적 총자산 변화 곡선"),
-                           image_block(raw_url(curve_file))]
-        append_blocks(page_id, new_blocks, ignore_errors=True)
+            safe_add_block(page_id, h3_block("📈 누적 총자산 변화 곡선"), "h3")
+            safe_add_block(page_id, image_block(raw_url(curve_file)), "곡선 이미지")
         print("  ✅ '수익 분석' 섹션 신규 생성")
         return
     if pie_file:
@@ -880,11 +891,10 @@ def upsert_hold_tracker(page_id, tables, holdings):
     sec = tables.get("보유기간 트래커", {})
     header = ["종목명","티커","분류","최초매수일","보유일수","매입가","현재가","수익률"]
     if not sec.get("heading_id"):
-        # 블록 하나씩 개별 추가 (일괄 추가 시 400 오류 방지)
-        for blk in [divider_block(), h2_block("⏱ 보유기간 트래커"),
-                    para_block("종목별 최초 매수일 기준 보유일수 (매일 자동 갱신)", color="gray")]:
-            npost(f"blocks/{page_id}/children", {"children": [blk]})
-            time.sleep(0.2)
+        # 블록 하나씩 안전하게 추가
+        safe_add_block(page_id, divider_block(), "divider")
+        safe_add_block(page_id, h2_block("⏱ 보유기간 트래커"), "h2")
+        safe_add_block(page_id, para_block("종목별 최초 매수일 기준 보유일수 (매일 자동 갱신)", color="gray"), "para")
         # 날짜 형식 통일 (YYYYMMDD → YYYY-MM-DD)
         def fmt_date(d):
             d = str(d)
@@ -924,23 +934,14 @@ def upsert_index_section(page_id, tables, all_blocks,
         j_rows = [trow([j["name"],j["ticker"],j["index"],
                         str(j["종목누적(%)"]),str(j["지수누적(%)"]),
                         str(j["차이(%)"]),j["판정"]]) for j in judgements]
-        # 블록 하나씩 개별 추가
-        for blk in [divider_block(), h2_block("📈 지수기반 종목분석"),
-                    h3_block("📋 지수 분석 대상 및 판정")]:
-            npost(f"blocks/{page_id}/children", {"children": [blk]})
-            time.sleep(0.2)
+        safe_add_block(page_id, divider_block(), "divider")
+        safe_add_block(page_id, h2_block("📈 지수기반 종목분석"), "h2")
+        safe_add_block(page_id, h3_block("📋 지수 분석 대상 및 판정"), "h3")
         create_table_with_rows(page_id, 7, True, j_header, j_rows)
         time.sleep(0.3)
-        for blk in [
-            para_block("※ 6개월 누적 수익률이 기준지수 대비 -10%p 이하 → 손절 검토", color="gray"),
-            h3_block("📉 기준지수 대비 월별 수익률 비교 차트"),
-            image_block(chart_url),
-        ]:
-            try:
-                npost(f"blocks/{page_id}/children", {"children": [blk]})
-                time.sleep(0.2)
-            except Exception as e:
-                print(f"  ⚠ 블록 추가 실패 (무시): {e}")
+        safe_add_block(page_id, para_block("※ 6개월 누적 수익률이 기준지수 대비 -10%p 이하 → 손절 검토", color="gray"), "para")
+        safe_add_block(page_id, h3_block("📉 기준지수 대비 월별 수익률 비교 차트"), "h3")
+        safe_add_block(page_id, image_block(chart_url), "지수비교 이미지")
         print("  ✅ '지수기반 종목분석' 섹션 신규 생성")
         return
 
