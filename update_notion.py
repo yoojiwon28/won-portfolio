@@ -435,7 +435,8 @@ def chart_history_curve(history_rows):
 # ─────────────────────────────────────────────
 # 차트 ④ 지수 대비 월별 수익률
 # ─────────────────────────────────────────────
-INDEX_TICKERS = {"코스피200": "^KS200", "S&P500": "^GSPC", "나스닥100": "^NDX"}
+INDEX_TICKERS = {"S&P500": "^GSPC", "나스닥100": "^NDX"}  # 코스피200은 별도 처리
+KOSPI200_TICKER = "1028"  # pykrx 코스피200 ETF 대용 (KODEX 200)
 WATCHLIST = [
     {"name":"테슬라",       "ticker":"TSLA",   "index":"나스닥100"},
     {"name":"구글(알파벳)", "ticker":"GOOG",   "index":"나스닥100"},
@@ -485,6 +486,9 @@ def chart_index_comparison():
     for idx_name, idx_ticker in INDEX_TICKERS.items():
         index_returns[idx_name] = get_monthly_returns_yf(idx_ticker, months=6)
         time.sleep(0.5)
+    # 코스피200: pykrx로 조회 (069500 = KODEX 200)
+    index_returns["코스피200"] = get_monthly_returns_krx("069500", months=6)
+    time.sleep(0.3)
 
     all_months = set()
     for r in index_returns.values():
@@ -606,33 +610,49 @@ def update_table_total_assets(sec, total_eval, total_profit, total_rate):
     else:              append_row(tid, cells)
 
 def update_table_holdings(sec, holdings):
-    """보유주식 테이블 업데이트 — 기존 헤더 컬럼 수에 맞게 자동 대응"""
+    """보유주식 테이블 업데이트 — 헤더 컬럼 수 자동 감지해서 맞춤"""
     tid = sec.get("table_id")
     if not tid: return
     all_rows = get_table_rows(tid)
     if not all_rows: return
 
-    # 헤더에 현재가 컬럼 없으면 추가
+    # 헤더에서 컬럼 수와 현재가 포함 여부 확인
     header_cells = all_rows[0]["table_row"]["cells"]
     header_texts = ["".join(t.get("plain_text","") for t in cell)
                     for cell in header_cells]
-    if "현재가" not in header_texts:
-        new_header = ["종목이름","티커","현재가","평가금액","수익","수익률","보유수량","매입가","분류"]
-        update_row(all_rows[0]["id"], new_header)
+    has_current_price = "현재가" in header_texts
+    col_count = len(header_texts)
 
     existing = all_rows[1:]
     for i, h in enumerate(holdings):
         emoji = "📈" if h["profit_rate"] >= 0 else "📉"
-        cells = [
-            h["name"], h["ticker"],
-            f"{h.get('current_price', h['avg_price']):,.0f}원",
-            f"{h['eval_amount']:,.0f}원",
-            f"{h['profit']:+,.0f}원",
-            f"{emoji} {h['profit_rate']:+.2f}%",
-            str(h["qty"]),
-            f"{h['avg_price']:,.0f}원",
-            h["category"],
-        ]
+        if has_current_price:
+            # 현재가 컬럼 포함 9컬럼 (평가금액 → 현재가 순서)
+            cells = [
+                h["name"], h["ticker"],
+                f"{h['eval_amount']:,.0f}원",
+                f"{h.get('current_price', h['avg_price']):,.0f}원",
+                f"{h['profit']:+,.0f}원",
+                f"{emoji} {h['profit_rate']:+.2f}%",
+                str(h["qty"]),
+                f"{h['avg_price']:,.0f}원",
+                h["category"],
+            ]
+        else:
+            # 현재가 없는 기존 8컬럼
+            cells = [
+                h["name"], h["ticker"],
+                f"{h['eval_amount']:,.0f}원",
+                f"{h['profit']:+,.0f}원",
+                f"{emoji} {h['profit_rate']:+.2f}%",
+                str(h["qty"]),
+                f"{h['avg_price']:,.0f}원",
+                h["category"],
+            ]
+        # 실제 테이블 컬럼 수에 맞게 자르거나 채우기
+        cells = cells[:col_count]
+        while len(cells) < col_count:
+            cells.append("")
         if i < len(existing): update_row(existing[i]["id"], cells)
         else:                  append_row(tid, cells)
         time.sleep(0.15)
