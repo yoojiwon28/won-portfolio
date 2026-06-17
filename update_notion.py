@@ -449,8 +449,8 @@ def chart_curve(history_rows):
 # 차트 ④ 지수 대비 월별 수익률
 # ─────────────────────────────────────────────
 INDEX_TICKERS = {"S&P500": "^GSPC", "나스닥100": "^NDX"}
-# 기본 관심종목 (노션 테이블 읽기 실패 시 폴백)
-WATCHLIST_DEFAULT = [
+# 관심종목 고정 목록
+WATCHLIST = [
     {"name":"테슬라",       "ticker":"TSLA",   "index":"나스닥100"},
     {"name":"구글(알파벳)", "ticker":"GOOG",   "index":"나스닥100"},
     {"name":"엔비디아",     "ticker":"NVDA",   "index":"나스닥100"},
@@ -464,49 +464,6 @@ WATCHLIST_DEFAULT = [
     {"name":"존슨앤드존슨", "ticker":"JNJ",    "index":"S&P500"},
     {"name":"코카콜라",     "ticker":"KO",     "index":"S&P500"},
 ]
- 
-def load_watchlist_from_table():
-    """
-    노션 지수기반 종목분석 테이블에서 관심종목 읽기.
-    헤더: 종목명 / 기준지수 / 6개월수익률 / 기준지수수익률 / 알파값(α) / 판정
-    종목명·티커가 "삼성전자(005930)" 형식이거나 별도 티커 컬럼이 없으면
-    종목명에서 티커를 추출.
-    """
-    try:
-        rows = get_table_rows(BLK["table_index"])
-        if len(rows) < 2:
-            return None  # 헤더만 있거나 비어있음
-        header = ["".join(t.get("plain_text","") for t in cell)
-                  for cell in rows[0]["table_row"]["cells"]]
-        watchlist = []
-        for row in rows[1:]:
-            cells_text = ["".join(t.get("plain_text","") for t in cell)
-                          for cell in row["table_row"]["cells"]]
-            if not any(cells_text):
-                continue
-            # 첫 번째 컬럼: 종목명 (티커가 없으면 종목명에서 추출 시도)
-            name_raw = cells_text[0].strip() if cells_text else ""
-            # 두 번째 컬럼: 기준지수
-            index_raw = cells_text[1].strip() if len(cells_text) > 1 else ""
-            if not name_raw or not index_raw:
-                continue
-            # 종목명에서 티커 추출: "삼성전자(005930)" → name=삼성전자, ticker=005930
-            import re
-            match = re.search(r'\(([A-Za-z0-9]+)\)', name_raw)
-            if match:
-                ticker = match.group(1)
-                name   = name_raw[:name_raw.index("(")].strip()
-            else:
-                # 티커가 없으면 종목명 전체를 ticker로도 사용 (나중에 조회 실패)
-                ticker = name_raw
-                name   = name_raw
-            watchlist.append({"name": name, "ticker": ticker, "index": index_raw})
-        if watchlist:
-            print(f"  ✅ 노션 테이블에서 관심종목 {len(watchlist)}개 로드")
-            return watchlist
-    except Exception as e:
-        print(f"  ⚠ 관심종목 테이블 읽기 실패: {e}")
-    return None
  
 def monthly_returns_yf(ticker, months=6):
     end   = KST_NOW
@@ -537,9 +494,7 @@ def monthly_returns_krx(ticker, months=6):
     except Exception:
         return {}
  
-def chart_index_comparison(watchlist=None):
-    if watchlist is None:
-        watchlist = WATCHLIST_DEFAULT
+def chart_index_comparison():
     print("  기준지수 조회 중...")
     index_returns = {}
     for idx_name, idx_ticker in INDEX_TICKERS.items():
@@ -555,7 +510,7 @@ def chart_index_comparison(watchlist=None):
  
     stock_data, judgements = [], []
     print("  관심종목 조회 중...")
-    for item in watchlist:
+    for item in WATCHLIST:
         is_domestic = item["ticker"].isdigit() and len(item["ticker"]) == 6
         ret = monthly_returns_krx(item["ticker"]) if is_domestic \
               else monthly_returns_yf(item["ticker"])
@@ -836,36 +791,32 @@ def sync_child_page_trade(trades):
         print(f"  ✅ 전체 매매일지 테이블 업데이트 ({len(data_rows)}건)")
  
 def update_index_table(judgements):
-    """지수기반 종목분석 테이블 업데이트 (판정 정보만 업데이트, 종목명/티커 보존)"""
+    """지수기반 종목분석 테이블: 기존 데이터 행 삭제 후 재작성"""
     table_id = BLK["table_index"]
     try:
         rows = get_table_rows(table_id)
-        if len(rows) < 2:
-            print("  ⚠ 지수기반 종목분석 테이블이 비어있음")
-            return
-        data_rows_map = {j["name"]: j for j in judgements}
-        existing = rows[1:]
-        for row in existing:
-            cells = ["".join(t.get("plain_text","") for t in cell)
-                     for cell in row["table_row"]["cells"]]
-            name_raw = cells[0].strip() if cells else ""
-            # 종목명 매칭 (괄호 티커 포함 형식 대응)
-            import re
-            clean_name = re.sub(r'\(.*?\)', '', name_raw).strip()
-            j = data_rows_map.get(clean_name) or data_rows_map.get(name_raw)
-            if not j:
-                continue
-            new_cells = list(cells)
-            # 컬럼 수에 따라 업데이트 (최소 6컬럼: 종목명/기준지수/6개월/지수/알파/판정)
-            while len(new_cells) < 6:
-                new_cells.append("")
-            new_cells[2] = f"{j['stock_cum']:+.2f}%"
-            new_cells[3] = f"{j['idx_cum']:+.2f}%"
-            new_cells[4] = f"{j['alpha']:+.2f}%"
-            new_cells[5] = j["judgement"]
-            update_row(row["id"], new_cells)
+        # 기존 데이터 행 삭제 (헤더 제외)
+        for row in rows[1:]:
+            try:
+                requests.delete(
+                    f"https://api.notion.com/v1/blocks/{row['id']}",
+                    headers=HEADERS)
+                time.sleep(0.1)
+            except Exception:
+                pass
+        time.sleep(0.3)
+        # 데이터 행 새로 추가
+        for j in judgements:
+            cells = [
+                j["name"], j["index"],
+                f"{j['stock_cum']:+.2f}%",
+                f"{j['idx_cum']:+.2f}%",
+                f"{j['alpha']:+.2f}%",
+                j["judgement"],
+            ]
+            append_row(table_id, cells)
             time.sleep(0.15)
-        print(f"  ✅ 지수기반 종목분석 테이블 업데이트 ({len(existing)}행)")
+        print(f"  ✅ 지수기반 종목분석 테이블 업데이트 ({len(judgements)}종목)")
     except Exception as e:
         print(f"  ⚠ 지수기반 종목분석 업데이트 실패: {e}")
  
@@ -989,33 +940,27 @@ def main():
         print("  ✅ 총자산 테이블 업데이트")
  
         # 보유주식 테이블 (헤더 컬럼 수 자동 감지)
-        all_rows = get_table_rows(BLK["table_holdings"])
-        header_texts = ["".join(t.get("plain_text","") for t in cell)
-                        for cell in all_rows[0]["table_row"]["cells"]] \
-                       if all_rows else []
-        has_cur = "현재가" in header_texts
-        col_count = len(header_texts) if header_texts else 8
+        # 보유주식 테이블: 헤더 순서 고정
+        # 종목이름/티커/평가금액/현재가/수익/수익률/보유수량/매입가/분류 (9열)
         holdings_rows = []
         for h in holdings:
             em = "📈" if h["profit_rate"] >= 0 else "📉"
-            if has_cur:
-                row = [h["name"], h["ticker"],
-                       f"{h['eval_amount']:,.0f}원",
-                       f"{h.get('current_price', h['avg_price']):,.0f}원",
-                       f"{h['profit']:+,.0f}원",
-                       f"{em} {h['profit_rate']:+.2f}%",
-                       str(h["qty"]), f"{h['avg_price']:,.0f}원", h["category"]]
-            else:
-                row = [h["name"], h["ticker"],
-                       f"{h['eval_amount']:,.0f}원",
-                       f"{h['profit']:+,.0f}원",
-                       f"{em} {h['profit_rate']:+.2f}%",
-                       str(h["qty"]), f"{h['avg_price']:,.0f}원", h["category"]]
-            holdings_rows.append(row[:col_count])
+            row = [
+                h["name"],
+                h["ticker"],
+                f"{h['eval_amount']:,.0f}원",
+                f"{h.get('current_price', h['avg_price']):,.0f}원",
+                f"{h['profit']:+,.0f}원",
+                f"{em} {h['profit_rate']:+.2f}%",
+                str(h["qty"]),
+                f"{h['avg_price']:,.0f}원",
+                h["category"],
+            ]
+            holdings_rows.append(row)
  
-        # 기존 데이터 행 삭제 후 재작성 (행 수 불일치 방지)
-        data_rows_existing = all_rows[1:] if all_rows else []
-        for row in data_rows_existing:
+        # 기존 데이터 행 삭제 후 재작성
+        all_rows = get_table_rows(BLK["table_holdings"])
+        for row in all_rows[1:]:
             try:
                 requests.delete(
                     f"https://api.notion.com/v1/blocks/{row['id']}",
@@ -1023,9 +968,10 @@ def main():
                 time.sleep(0.1)
             except Exception:
                 pass
+        time.sleep(0.3)
         for cells in holdings_rows:
             append_row(BLK["table_holdings"], cells)
-            time.sleep(0.15)
+            time.sleep(0.2)
         print(f"  ✅ 보유주식 테이블 업데이트 ({len(holdings)}종목)")
  
         # 최근 매매일지 테이블
@@ -1071,4 +1017,3 @@ def main():
  
 if __name__ == "__main__":
     main()
- 
