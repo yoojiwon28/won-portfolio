@@ -470,7 +470,7 @@ def get_monthly_returns_krx(ticker, months=6):
         df = krx.get_market_ohlcv_by_date(
             fromdate=start.strftime("%Y%m%d"),
             todate=end.strftime("%Y%m%d"),
-            ticker=ticker, freq="M")
+            ticker=ticker, freq="m")
         if df.empty: return {}
         closes = df["종가"]
         return {closes.index[i+1].strftime("%Y-%m"):
@@ -606,9 +606,21 @@ def update_table_total_assets(sec, total_eval, total_profit, total_rate):
     else:              append_row(tid, cells)
 
 def update_table_holdings(sec, holdings):
+    """보유주식 테이블 업데이트 — 기존 헤더 컬럼 수에 맞게 자동 대응"""
     tid = sec.get("table_id")
     if not tid: return
-    existing = get_table_rows(tid)[1:]
+    all_rows = get_table_rows(tid)
+    if not all_rows: return
+
+    # 헤더에 현재가 컬럼 없으면 추가
+    header_cells = all_rows[0]["table_row"]["cells"]
+    header_texts = ["".join(t.get("plain_text","") for t in cell)
+                    for cell in header_cells]
+    if "현재가" not in header_texts:
+        new_header = ["종목이름","티커","현재가","평가금액","수익","수익률","보유수량","매입가","분류"]
+        update_row(all_rows[0]["id"], new_header)
+
+    existing = all_rows[1:]
     for i, h in enumerate(holdings):
         emoji = "📈" if h["profit_rate"] >= 0 else "📉"
         cells = [
