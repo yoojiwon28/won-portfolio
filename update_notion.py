@@ -36,7 +36,7 @@ BLK = {
     "h2_curve":         "3824a83490b980a6982ccd045153b2f4",
     "img_curve":        "3824a83490b980b1a217c23db23bc736",
     "h2_holdings":      "7c739e9d6b724ebca38fe841b7d151fd",
-    "table_holdings":   "72e624bd0e4648bba8565fdd0e9d3eb6",
+    "table_holdings":   "3824a83490b980d597fdf1e61e15927a",
     "h2_pie":           "3824a83490b9800eb4f7e2667ccd3632",
     "img_pie":          "3824a83490b980d78bffdf746d61323b",
     "h2_tracker":       "3824a83490b98015994af35dfc0694ff",
