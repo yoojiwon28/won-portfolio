@@ -1,39 +1,37 @@
 name: SWING Portfolio Update
-
+ 
 on:
   schedule:
-    # 매일 KST 09:00 (UTC 00:00), 평일
     - cron: '0 0 * * 1-5'
   workflow_dispatch:
-    # Make(버튼) 또는 수동 실행
     inputs:
       triggered_by:
         description: '실행 출처'
         required: false
         default: 'manual'
-
+ 
 jobs:
   update:
     runs-on: ubuntu-latest
-
+ 
     steps:
       - name: 저장소 체크아웃
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
+ 
       - name: Python 설정
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
+ 
       - name: 패키지 설치
         run: |
           pip install requests pandas matplotlib yfinance pykrx
-          sudo apt-get install -y fonts-nanum
+          sudo apt-get install -y fonts-nanum -q
           fc-cache -fv
-
-      - name: 포트폴리오 업데이트 실행
+ 
+      - name: STEP 1 — 현재가 조회 + 차트 생성
         env:
           NOTION_TOKEN:   ${{ secrets.NOTION_TOKEN }}
           NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
@@ -42,12 +40,25 @@ jobs:
           DB_ASSETS:      ${{ secrets.DB_ASSETS }}
           GITHUB_REPO:    ${{ github.repository }}
           GITHUB_BRANCH:  main
+          RUN_MODE:       charts_only   # 차트만 생성
         run: python update_notion.py
-
-      - name: 차트 이미지 커밋 & 푸시
+ 
+      - name: STEP 2 — 차트 이미지 커밋 & 푸시
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add charts/ data/history.csv || true
-          git diff --cached --quiet || git commit -m "📊 자동 업데이트 $(date +'%Y-%m-%d %H:%M KST')"
+          git add charts/ data/ || true
+          git diff --cached --quiet || git commit -m "📊 차트 업데이트 $(date +'%Y-%m-%d %H:%M')"
           git push
+ 
+      - name: STEP 3 — Notion 업데이트 (차트 커밋 후)
+        env:
+          NOTION_TOKEN:   ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ secrets.NOTION_PAGE_ID }}
+          DB_TRADE:       ${{ secrets.DB_TRADE }}
+          DB_HOLDINGS:    ${{ secrets.DB_HOLDINGS }}
+          DB_ASSETS:      ${{ secrets.DB_ASSETS }}
+          GITHUB_REPO:    ${{ github.repository }}
+          GITHUB_BRANCH:  main
+          RUN_MODE:       notion_only   # Notion만 업데이트
+        run: python update_notion.py
