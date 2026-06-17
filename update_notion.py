@@ -1,3 +1,4 @@
+
 """
 SWING Portfolio - GitHub Actions 자동 업데이트 스크립트 v4
 노션 구조에 맞게 각 섹션에 직접 이미지/테이블 삽입
@@ -51,10 +52,15 @@ BLK = {
     "table_trade":       "d863a76f079a4de2a84c84b50b507d01",
     # 종목별 수익률 (이미지 삽입 대상)
     "h2_bar":            "3824a83490b98061 89edc645b72bb7fc".replace(" ", ""),
-    # 수익 분석 섹션 (이미지 삽입 대상 - 파이+바+곡선 종합)
+    # 수익 분석 섹션
     "h2_analysis":       "3824a83490b98021a720e1c62bacd064",
-    # 지수기반 종목 분석 (테이블+차트 삽입 대상)
+    # 지수기반 종목 분석
     "h2_index":          "3824a83490b980e5a50eecee731fb9a9",
+    # 이미지 블록 ID (노션에 미리 생성된 placeholder 이미지)
+    "img_curve":         "3824a83490b980b1a217c23db23bc736",  # 누적 총자산 곡선
+    "img_pie":           "3824a83490b980d78bffdf746d61323b",  # 분류별 비율
+    "img_bar":           "3824a83490b9808b8c8ac12ea8618fc1",  # 종목별 수익률
+    "img_index":         "3824a83490b9809eb511d0813daa9bed",  # 지수비교 차트
     # DB
     "db_assets":         "f6aa484832ad463eb353fbbf8e69dc79",
     "db_holdings":       "756fd3fb2db2436f9fa2cb3aeb7bcf41",
@@ -66,8 +72,11 @@ HEADERS = {
     "Content-Type": "application/json",
     "Notion-Version": "2022-06-28",
 }
-TODAY     = datetime.today().strftime("%Y-%m-%d")
-TODAY_KRX = datetime.today().strftime("%Y%m%d")
+# KST = UTC+9
+KST_NOW   = datetime.utcnow() + __import__("datetime").timedelta(hours=9)
+TODAY     = KST_NOW.strftime("%Y-%m-%d")
+TODAY_KRX = KST_NOW.strftime("%Y%m%d")
+NOW_STR   = KST_NOW.strftime("%Y-%m-%d %H:%M KST")
 CHARTS_DIR   = Path("charts")
 DATA_DIR     = Path("data")
 CHARTS_DIR.mkdir(exist_ok=True)
@@ -182,59 +191,37 @@ def append_one(parent_id, blk, label=""):
     return safe_post(f"blocks/{parent_id}/children",
                      {"children":[blk]}, label)
  
-def insert_image_after_heading(h2_block_id, img_url, label="이미지"):
-    """
-    heading_2 블록의 자식으로 이미지 삽입.
-    Notion에서 heading_2는 자식을 가질 수 없으므로
-    heading 다음 형제 블록을 찾아 page에 append하는 대신,
-    heading_2 바로 다음에 오는 기존 이미지 블록을 찾아 URL 교체.
-    없으면 page에 append.
-    """
-    # 페이지 전체 블록에서 heading 다음 블록 찾기
-    all_blocks = get_children(NOTION_PAGE_ID)
-    for i, b in enumerate(all_blocks):
-        if b["id"].replace("-","") == h2_block_id.replace("-",""):
-            # 다음 블록 확인
-            if i+1 < len(all_blocks):
-                nxt = all_blocks[i+1]
-                if nxt["type"] == "image":
-                    # URL 교체
-                    try:
-                        npatch(f"blocks/{nxt['id']}",
-                               {"image":{"type":"external",
-                                         "external":{"url":img_url}}})
-                        print(f"  ✅ {label} 이미지 URL 교체")
-                        return
-                    except Exception as e:
-                        print(f"  ⚠ {label} URL 교체 실패: {e}")
-            break
-    # 없으면 새로 추가 (페이지 맨 끝이 아닌 heading 자식으로 시도)
-    result = safe_post(f"blocks/{NOTION_PAGE_ID}/children",
-                       {"children":[image_block(img_url)]}, label)
-    if result:
-        print(f"  ✅ {label} 이미지 새로 추가")
+def update_image_block(img_block_id, img_url, label="이미지"):
+    """이미지 블록 ID로 직접 URL 교체"""
+    try:
+        npatch(f"blocks/{img_block_id}",
+               {"image":{"type":"external","external":{"url":img_url}}})
+        print(f"  ✅ {label} 이미지 업데이트")
+    except Exception as e:
+        print(f"  ⚠ {label} 이미지 업데이트 실패: {e}")
  
-def create_table_after_heading(h2_block_id, col_count,
-                                has_header, header_cells, data_rows, label="테이블"):
+def upsert_table(parent_id, col_count, has_header,
+                  header_cells, data_rows, label="테이블"):
     """
-    heading_2 다음에 테이블이 없으면 page에 새로 생성.
-    있으면 행 업데이트.
+    parent_id 아래 첫 번째 테이블을 찾아 업데이트.
+    없으면 parent_id 자식으로 새로 생성.
+    parent_id: heading_2 블록 ID 또는 페이지 ID
     """
-    all_blocks = get_children(NOTION_PAGE_ID)
+    children = get_children(parent_id)
     table_id = None
-    for i, b in enumerate(all_blocks):
-        if b["id"].replace("-","") == h2_block_id.replace("-",""):
-            if i+1 < len(all_blocks) and all_blocks[i+1]["type"] == "table":
-                table_id = all_blocks[i+1]["id"].replace("-","")
+    for b in children:
+        if b["type"] == "table":
+            table_id = b["id"].replace("-","")
             break
  
     if table_id:
-        # 기존 테이블 행 업데이트
         existing = get_table_rows(table_id)[1:]
         for i, row in enumerate(data_rows):
-            cells = [c["table_row"]["cells"][j][0]["text"]["content"]
-                     if row["table_row"]["cells"][j] else ""
-                     for j in range(col_count)]
+            if isinstance(row, dict) and "table_row" in row:
+                cells = ["".join(t.get("plain_text","") for t in cell)
+                         for cell in row["table_row"]["cells"]]
+            else:
+                cells = row
             if i < len(existing):
                 update_row(existing[i]["id"], cells)
             else:
@@ -243,33 +230,27 @@ def create_table_after_heading(h2_block_id, col_count,
         print(f"  ✅ {label} 테이블 업데이트")
         return table_id
  
-    # 새로 생성: 빈 테이블 먼저
-    resp = safe_post(f"blocks/{NOTION_PAGE_ID}/children",
-                     {"children":[{
-                         "object":"block","type":"table",
-                         "table":{
-                             "table_width": col_count,
-                             "has_column_header": has_header,
-                             "has_row_header": False,
-                         }
-                     }]}, f"{label} 테이블 생성")
-    if not resp:
-        return None
-    table_id = resp["results"][0]["id"]
+    # 신규 생성
+    resp = safe_post(f"blocks/{parent_id}/children", {"children":[{
+        "object":"block","type":"table",
+        "table":{"table_width":col_count,
+                 "has_column_header":has_header,
+                 "has_row_header":False}
+    }]}, f"{label} 테이블 생성")
+    if not resp: return None
+    table_id = resp["results"][0]["id"].replace("-","")
     time.sleep(0.3)
-    # 헤더 행
-    npost(f"blocks/{table_id}/children",
-          {"children":[trow(header_cells)]})
+    npost(f"blocks/{table_id}/children",{"children":[trow(header_cells)]})
     time.sleep(0.2)
-    # 데이터 행
     for i in range(0, len(data_rows), 50):
         batch = data_rows[i:i+50]
-        # data_rows가 trow() 결과물인 경우
-        if batch and isinstance(batch[0], dict) and "table_row" in batch[0]:
-            npost(f"blocks/{table_id}/children", {"children": batch})
-        else:
-            npost(f"blocks/{table_id}/children",
-                  {"children":[trow(r) for r in batch]})
+        rows_to_add = []
+        for row in batch:
+            if isinstance(row, dict) and "table_row" in row:
+                rows_to_add.append(row)
+            else:
+                rows_to_add.append(trow(row))
+        npost(f"blocks/{table_id}/children",{"children":rows_to_add})
         time.sleep(0.2)
     print(f"  ✅ {label} 테이블 신규 생성")
     return table_id
@@ -742,8 +723,8 @@ def update_table_block(table_id, data_rows_cells, start_idx=1):
  
 def update_date_para():
     npatch(f"blocks/{BLK['paragraph_date']}",
-           {"paragraph":{"rich_text":[rt(f"작성일자: {TODAY}")]}})
-    print("  ✅ 작성일자 업데이트")
+           {"paragraph":{"rich_text":[rt(f"🕐 마지막 업데이트: {NOW_STR}")]}})
+    print(f"  ✅ 업데이트 시간: {NOW_STR}")
  
 # ─────────────────────────────────────────────
 # 전체 매매일지 child_page 동기화
@@ -804,43 +785,37 @@ def sync_child_page_trade(trades):
 # 지수기반 종목분석 테이블 업데이트
 # ─────────────────────────────────────────────
 def update_index_table(judgements):
-    """
-    h2_index 아래 테이블 업데이트.
-    컬럼: 종목명 / 기준지수 / 6개월수익률 / 기준지수수익률 / 알파값 / 판정
-    """
+    """h2_index 자식으로 관심종목 판정 테이블 생성/업데이트"""
     headers = ["종목명","기준지수","6개월수익률","기준지수수익률","알파값(α)","판정"]
-    data_rows = [[
-        j["name"], j["index"],
-        f"{j['stock_cum']:+.2f}%",
-        f"{j['idx_cum']:+.2f}%",
-        f"{j['alpha']:+.2f}%",
-        j["judgement"],
-    ] for j in judgements]
- 
-    create_table_after_heading(
-        BLK["h2_index"], 6, True, headers,
-        [trow(r) for r in data_rows], "지수기반 종목분석")
+    data_rows = [
+        [j["name"], j["index"],
+         f"{j['stock_cum']:+.2f}%",
+         f"{j['idx_cum']:+.2f}%",
+         f"{j['alpha']:+.2f}%",
+         j["judgement"]]
+        for j in judgements
+    ]
+    upsert_table(BLK["h2_index"], 6, True, headers, data_rows, "지수기반 종목분석")
  
 # ─────────────────────────────────────────────
 # 보유기간 트래커 테이블 업데이트
 # ─────────────────────────────────────────────
 def update_tracker_table(holdings):
+    """h2_tracker 자식으로 보유기간 트래커 테이블 생성/업데이트"""
     headers = ["종목명","티커","분류","최초매수일","보유일수","매입가","현재가","수익률"]
     def fmt_date(d):
         d=str(d)
         return f"{d[:4]}-{d[4:6]}-{d[6:]}" if len(d)==8 else d
-    data_rows = [[
-        h["name"], h["ticker"], h["category"],
-        fmt_date(h["first_buy_date"]),
-        f"{int(h['hold_days'])}일",
-        f"{float(h['avg_price']):,.0f}원",
-        f"{float(h.get('current_price',h['avg_price'])):,.0f}원",
-        f"{'📈' if float(h['profit_rate'])>=0 else '📉'} {float(h['profit_rate']):+.2f}%",
-    ] for h in holdings]
- 
-    create_table_after_heading(
-        BLK["h2_tracker"], 8, True, headers,
-        [trow(r) for r in data_rows], "보유기간 트래커")
+    data_rows = [
+        [h["name"], h["ticker"], h["category"],
+         fmt_date(h["first_buy_date"]),
+         f"{int(h['hold_days'])}일",
+         f"{float(h['avg_price']):,.0f}원",
+         f"{float(h.get('current_price',h['avg_price'])):,.0f}원",
+         f"{'📈' if float(h['profit_rate'])>=0 else '📉'} {float(h['profit_rate']):+.2f}%"]
+        for h in holdings
+    ]
+    upsert_table(BLK["h2_tracker"], 8, True, headers, data_rows, "보유기간 트래커")
  
 # ─────────────────────────────────────────────
 # 메인
@@ -848,7 +823,7 @@ def update_tracker_table(holdings):
 def main():
     run_mode = os.environ.get("RUN_MODE","all")
     print(f"\n{'='*55}")
-    print(f"  SWING Portfolio v4  {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"  SWING Portfolio v4  {NOW_STR}")
     print(f"  모드: {run_mode}")
     print(f"{'='*55}\n")
  
@@ -983,31 +958,30 @@ def main():
         print("\n[6] 전체 매매일지 페이지 동기화...")
         sync_child_page_trade(trades)
  
-        # ── 차트 이미지 삽입
-        print("\n[7] 차트 이미지 삽입...")
+        # ── 차트 이미지 업데이트 (미리 만들어둔 이미지 블록 URL 교체)
+        print("\n[7] 차트 이미지 업데이트...")
         if curve_file:
-            insert_image_after_heading(BLK["h2_curve"],
-                                       raw_url(curve_file),"누적 총자산 곡선")
+            update_image_block(BLK["img_curve"], raw_url(curve_file), "누적 총자산 곡선")
         if pie_file:
-            insert_image_after_heading(BLK["h2_pie"],
-                                       raw_url(pie_file),"분류별 비율")
+            update_image_block(BLK["img_pie"], raw_url(pie_file), "분류별 비율")
         if bar_file:
-            insert_image_after_heading(BLK["h2_bar"],
-                                       raw_url(bar_file),"종목별 수익률")
+            update_image_block(BLK["img_bar"], raw_url(bar_file), "종목별 수익률")
+        if idx_file:
+            update_image_block(BLK["img_index"], raw_url(idx_file), "지수비교 차트")
  
-        # 수익 분석 섹션 (파이+바+곡선 종합 안내 텍스트)
-        safe_post(f"blocks/{BLK['h2_analysis']}/children" 
-                  if False else f"blocks/{NOTION_PAGE_ID}/children",
-                  {"children":[]}, "")  # 패스 (이미 개별 섹션에 삽입)
+        # ── 수익 분석 섹션 안내 텍스트
+        children = get_children(BLK["h2_analysis"])
+        if not children:
+            safe_post(f"blocks/{BLK['h2_analysis']}/children",
+                      {"children":[para_block(
+                          "📊 분류별 비율 · 종목별 수익률 · 누적 총자산 곡선을 위 섹션에서 확인하세요.",
+                          color="gray")]}, "수익 분석 안내")
  
-        # ── 지수기반 종목분석
+        # ── 지수기반 종목분석 테이블
         print("\n[8] 지수기반 종목분석 업데이트...")
         update_index_table(judgements)
-        if idx_file:
-            insert_image_after_heading(BLK["h2_index"],
-                                       raw_url(idx_file),"지수비교 차트")
  
-        # ── 보유기간 트래커
+        # ── 보유기간 트래커 테이블
         print("\n[9] 보유기간 트래커 업데이트...")
         update_tracker_table(holdings)
  
@@ -1017,3 +991,4 @@ def main():
  
 if __name__=="__main__":
     main()
+ 
